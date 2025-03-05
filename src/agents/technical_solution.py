@@ -93,56 +93,125 @@ class TechnicalSolutionAgent:
                 "style": tone_settings.get('style', 'Default'),
                 "industry": industry,
                 "technology_suggestions": tech_suggestions,
-                "project_requirements": project_requirements[:1000] if len(project_requirements) > 1000 else project_requirements,
-                "extracted_text_summary": extracted_text[:2000] if len(extracted_text) > 2000 else extracted_text
+                # Check if this is a requirements extraction or proposal structure task
+                "is_requirements_task": "extract specific" in project_requirements.lower() or "requirements extraction" in project_requirements.lower(),
+                "is_structure_task": "proposal structure" in project_requirements.lower() or "outline" in project_requirements.lower(),
+                # Increase context for requirements tasks
+                "project_requirements": project_requirements,
+                "extracted_text_summary": extracted_text[:3000] if len(extracted_text) > 3000 else extracted_text
             }
             
-            # Create a detailed system prompt for the AI
-            system_prompt = """
-            You are an expert technical solution architect with extensive experience creating detailed technical proposals
-            for enterprise and government clients. You excel at:
-            1. Understanding client requirements thoroughly
-            2. Designing appropriate technical architectures
-            3. Selecting the most suitable technologies
-            4. Explaining technical concepts clearly to non-technical stakeholders
-            5. Creating persuasive, logical solutions that address business problems
-            
-            Follow these steps when crafting a technical solution:
-            1. Analyze requirements thoroughly
-            2. Consider specific industry and client needs
-            3. Select modern, appropriate technologies
-            4. Structure your response with clear sections
-            5. Explain WHY each technology choice is appropriate
-            6. Include diagrams and visualizations when helpful (described in text)
-            """
-            
-            # Create the user prompt with all the context
-            user_prompt = f"""
-            ## Client Information
-            - Classification: {context['classification']}
-            - Industry: {context['industry']}
-            - Tone/Style: {context['tone']}/{context['style']}
-            
-            ## Requirements Summary
-            {context['extracted_text_summary']}
-            
-            ## Additional Project Requirements
-            {context['project_requirements']}
-            
-            ## Industry-Specific Technology Suggestions
-            {context['technology_suggestions']}
-            
-            Create a comprehensive technical proposal section that includes:
-            
-            1. **Requirements Analysis**: Restate and clarify the client's needs
-            2. **Proposed Architecture**: High-level design with components and interactions
-            3. **Technology Stack**: Specific technologies with justification for each choice
-            4. **Implementation Approach**: How the solution will be built and delivered
-            5. **Technical Differentiators**: Why our approach is superior
-            
-            Format your response with clear headings, bullet points for key features, and emphasize how the solution 
-            aligns with {context['classification']} requirements and {context['industry']} industry best practices.
-            """
+            # Custom system prompt based on the task type
+            if context["is_requirements_task"]:
+                system_prompt = """
+                You are an expert RFP analyst specializing in extracting concrete, specific requirements from RFP documents.
+                Your goal is to identify ALL key requirements that would need to be addressed in a proposal response.
+                For each requirement identified, create a clear, concise bullet point starting with a dash (-).
+                Focus on extracting requirements related to:
+                
+                1. Technical capabilities and features
+                2. Performance metrics and SLAs
+                3. Compliance and regulatory needs
+                4. Project deliverables and milestones
+                5. Implementation and timeline constraints
+                6. Budget and pricing constraints
+                7. Team qualifications and experience
+                
+                Be specific and precise. Avoid vague or generic statements.
+                Format each requirement as a single line starting with a dash (-)
+                """
+                
+                user_prompt = f"""
+                ## RFP Document Content
+                {context['extracted_text_summary']}
+                
+                ## Extraction Instructions
+                {context['project_requirements']}
+                
+                Carefully analyze the RFP content above and extract all specific requirements.
+                Each requirement should be a single line starting with a dash (-).
+                Be comprehensive and specific - these requirements will be used to build the proposal structure.
+                """
+                
+            elif context["is_structure_task"]:
+                system_prompt = """
+                You are an expert proposal writer who specializes in creating effective proposal outlines that directly 
+                address RFP requirements. Your goal is to create a comprehensive proposal structure with main sections 
+                and bullet points that will guide the content creation process.
+                
+                Your outline should:
+                1. Include 5-7 main sections that logically flow and cover all major RFP requirements
+                2. Under each section, list 3-5 specific bullet points of content to address
+                3. Ensure each bullet point clearly connects to specific RFP requirements
+                4. Follow best practices for proposal structure (Executive Summary first, clear next steps at the end)
+                5. Use clear, descriptive language for section titles and bullet points
+                
+                Format your response with main sections starting with a dash (-) and bullet points indented with an asterisk (*).
+                """
+                
+                user_prompt = f"""
+                ## Client Information
+                - Classification: {context['classification']}
+                - Industry: {context['industry']}
+                
+                ## RFP Context (Summary)
+                {context['extracted_text_summary']}
+                
+                ## Proposal Structure Instructions
+                {context['project_requirements']}
+                
+                Create a comprehensive proposal structure that directly addresses the requirements.
+                Use main sections (starting with -) and bullet points (starting with *) under each section.
+                Make sure each section and bullet point is relevant and specific to this particular RFP.
+                """
+                
+            else:
+                # Use the default technical solution system prompt
+                system_prompt = """
+                You are an expert technical solution architect with extensive experience creating detailed technical proposals
+                for enterprise and government clients. You excel at:
+                1. Understanding client requirements thoroughly
+                2. Designing appropriate technical architectures
+                3. Selecting the most suitable technologies
+                4. Explaining technical concepts clearly to non-technical stakeholders
+                5. Creating persuasive, logical solutions that address business problems
+                
+                Follow these steps when crafting a technical solution:
+                1. Analyze requirements thoroughly
+                2. Consider specific industry and client needs
+                3. Select modern, appropriate technologies
+                4. Structure your response with clear sections
+                5. Explain WHY each technology choice is appropriate
+                6. Include diagrams and visualizations when helpful (described in text)
+                """
+                
+                # Standard technical solution prompt
+                user_prompt = f"""
+                ## Client Information
+                - Classification: {context['classification']}
+                - Industry: {context['industry']}
+                - Tone/Style: {context['tone']}/{context['style']}
+                
+                ## Requirements Summary
+                {context['extracted_text_summary']}
+                
+                ## Additional Project Requirements
+                {context['project_requirements']}
+                
+                ## Industry-Specific Technology Suggestions
+                {context['technology_suggestions']}
+                
+                Create a comprehensive technical proposal section that includes:
+                
+                1. **Requirements Analysis**: Restate and clarify the client's needs
+                2. **Proposed Architecture**: High-level design with components and interactions
+                3. **Technology Stack**: Specific technologies with justification for each choice
+                4. **Implementation Approach**: How the solution will be built and delivered
+                5. **Technical Differentiators**: Why our approach is superior
+                
+                Format your response with clear headings, bullet points for key features, and emphasize how the solution 
+                aligns with {context['classification']} requirements and {context['industry']} industry best practices.
+                """
             
             # Generate the complete technical solution in one comprehensive call
             response = openai.chat.completions.create(

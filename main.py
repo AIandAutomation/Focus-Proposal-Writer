@@ -16,6 +16,7 @@ import re
 from dotenv import load_dotenv
 from docx import Document
 from docx.shared import Pt
+from datetime import datetime
 
 from src.coordinator import CoordinatorAgent
 from src.agents.document_extraction import DocumentExtractionAgent
@@ -220,14 +221,6 @@ def section_1():
     with col_left:
         st.header("Client Organization Info")
         
-        with st.expander("📚 Tips for Better Results", expanded=False):
-            st.markdown("""
-            ### Getting the Best Results
-            - Upload the complete RFP or project requirements document
-            - Include as much detail about the client as possible
-            - Categorize documents correctly for better analysis
-            """)
-        
         if "client_info" not in st.session_state:
             st.session_state["client_info"] = {"name": "", "description": "", "files": []}
         client = st.session_state["client_info"]
@@ -299,14 +292,14 @@ def section_1():
                         options=["RFP", "SOW", "Company Info", "Case Study", "News", "Whitepaper", "Other"],
                         key=f"your_category_{file.name}"
                     )
-            text = doc_extractor.extract_text(file)
-            if text:
-                your_files.append({"name": file.name, "text": text, "category": category})
-                key = "company_" + category
-                if key in st.session_state["sources"]:
-                    st.session_state["sources"][key] += "\n" + text
-                else:
-                    st.session_state["sources"][key] = text
+                text = doc_extractor.extract_text(file)
+                if text:
+                    your_files.append({"name": file.name, "text": text, "category": category})
+                    key = "company_" + category
+                    if key in st.session_state["sources"]:
+                        st.session_state["sources"][key] += "\n" + text
+                    else:
+                        st.session_state["sources"][key] = text
             your["files"] = your_files
         st.session_state["your_info"] = your
 
@@ -399,6 +392,185 @@ def section_2():
     # RIGHT PANEL: Proposal Structure
     with col_right:
         st.header("Proposal Structure")
+        
+        # Track if we have required data to generate a structure
+        has_documents = "extracted_text" in st.session_state and st.session_state.get("extracted_text", "")
+        has_structure = "proposal_sections" in st.session_state and len(st.session_state.get("proposal_sections", "").strip()) > 50
+        
+        # Status message about structure generation
+        if not has_documents:
+            st.warning("Please upload and process documents in Step 1 before generating a proposal structure.")
+        elif not has_structure:
+            st.info("Click 'Generate Proposal Structure' to create a customized outline based on your documents.")
+        
+        # Generate button for proposal structure - use a unique key not referenced in session state
+        generate_structure = st.button("Generate Proposal Structure", key="generate_structure_button")
+        
+        if generate_structure and has_documents:
+            with st.spinner("Analyzing documents and generating proposal structure..."):
+                # Get client info and extracted text
+                client_info = st.session_state["client_info"].get("description", "")
+                extracted_text = st.session_state.get("extracted_text", "")
+                
+                # Step 1: First extract structured requirements from the RFP documents
+                st.write("Step 1/2: Extracting key requirements from documents...")
+                rfp_requirements = []
+                
+                # Check if we already extracted requirements
+                if "extracted_requirements" in st.session_state and st.session_state["extracted_requirements"]:
+                    rfp_requirements = st.session_state["extracted_requirements"]
+                    st.write(f"Found {len(rfp_requirements)} previously extracted requirements.")
+                else:
+                    # Pre-process the text to identify key sections
+                    # Look for common RFP section headers to focus extraction
+                    headers = ["requirements", "scope of work", "deliverables", "specifications", 
+                              "objectives", "timeline", "evaluation criteria", "qualifications"]
+                    
+                    # Find relevant sections in the text
+                    important_sections = ""
+                    lines = extracted_text.splitlines()
+                    for i, line in enumerate(lines):
+                        line_lower = line.lower()
+                        # Check if line contains any of the headers
+                        if any(header in line_lower for header in headers):
+                            # Add this section (header + next 15 lines) to important sections
+                            section_end = min(i + 15, len(lines))
+                            important_sections += line + "\n" + "\n".join(lines[i+1:section_end]) + "\n\n"
+                    
+                    # If we found important sections, prioritize them
+                    if important_sections:
+                        extraction_text = important_sections + "\n\n" + extracted_text[:25000]
+                    else:
+                        extraction_text = extracted_text[:50000]
+                    
+                    # Extract requirements using a focused prompt
+                    result = coordinator.process_request(
+                        "generate_technical_section",
+                        client_text="Requirements Extraction",
+                        extracted_text=extraction_text,
+                        project_requirements="""
+                        You are an RFP specialist who needs to extract ALL specific requirements from an RFP document.
+                        
+                        Extract requirements in these categories:
+                        1. TECHNICAL: What specific capabilities, features, and functionalities are required
+                        2. PERFORMANCE: Required metrics, SLAs, speeds, capacities, or benchmarks
+                        3. COMPLIANCE: Required standards, regulations, certifications, or policies
+                        4. DELIVERABLES: Specific work products, documents, or artifacts required
+                        5. TIMELINE: Deadlines, milestones, or schedule requirements
+                        6. BUDGET: Cost constraints, payment structures, or financial terms
+                        7. QUALIFICATIONS: Required experience, certifications, or staffing
+                        
+                        Format each requirement as a single-line bullet point starting with '-'.
+                        Be concrete and specific. Do NOT include vague or generic statements.
+                        Include ALL important requirements, even if there are many.
+                        
+                        Label each requirement with its category in [BRACKETS] at the start.
+                        Example: 
+                        - [TECHNICAL] System must support concurrent access by at least 500 users
+                        - [TIMELINE] Final deliverables must be completed within 6 months of project start
+                        """
+                    )
+                    
+                    extracted_list = [line.strip("- ").strip() for line in 
+                                    result.get("technical_solution", "").splitlines() 
+                                    if line.strip().startswith("-")]
+                    
+                    if extracted_list:
+                        rfp_requirements = extracted_list
+                        st.session_state["extracted_requirements"] = rfp_requirements
+                        st.write(f"Extracted {len(rfp_requirements)} key requirements from documents.")
+                        
+                        # Display the first few requirements for transparency
+                        with st.expander("View extracted requirements"):
+                            for req in rfp_requirements[:10]:
+                                st.write(f"• {req}")
+                            if len(rfp_requirements) > 10:
+                                st.write(f"... and {len(rfp_requirements) - 10} more")
+                    else:
+                        st.write("No specific requirements found. Using general structure.")
+                
+                # Step 2: Generate a custom proposal structure based on the requirements
+                st.write("Step 2/2: Creating targeted proposal structure based on requirements...")
+                
+                # Prepare requirements as formatted text for the prompt
+                formatted_requirements = "\n".join([f"- {req}" for req in rfp_requirements])
+                
+                # Use the coordinator to generate a custom proposal structure
+                result = coordinator.process_request(
+                    "generate_technical_section",
+                    client_text=client_info,
+                    extracted_text=extracted_text[:10000],  # Use first 10k chars for context
+                    project_requirements=f"""
+                    As an expert RFP response strategist, create a proposal structure outline based on these SPECIFIC REQUIREMENTS:
+                    
+                    EXTRACTED RFP REQUIREMENTS:
+                    {formatted_requirements}
+                    
+                    INSTRUCTIONS:
+                    1. Create a logical structure with 5-7 main sections that collectively address ALL critical requirements
+                    2. For each section, provide 3-5 specific bullet points that will be used to generate content
+                    3. Each bullet point should clearly indicate which specific requirement(s) it addresses
+                    4. Include specialized sections that match the project type evident in the requirements
+                    5. Follow best practices for proposal structure:
+                       - Start with an Executive Summary
+                       - Include technical approach, implementation plan, qualifications, etc.
+                       - End with a strong conclusion and next steps
+                    
+                    FORMAT:
+                    - Section Title
+                      * Bullet point 1 [Addresses requirement: specific requirement text]
+                      * Bullet point 2 [Addresses requirements: specific requirement text]
+                      * Bullet point 3 [Addresses requirement: specific requirement text]
+                    
+                    Ensure the entire structure forms a cohesive, logical flow and fully addresses the client's needs.
+                    Use the client information to tailor the approach to their specific industry, size, and challenges.
+                    """
+                )
+                
+                # Extract the generated structure from the result
+                generated_outline = result.get("technical_solution", "")
+                
+                # Debug information
+                st.info(f"Generated outline length: {len(generated_outline)} characters")
+                
+                # If no structure was generated, use a basic template
+                if not generated_outline or len(generated_outline.strip()) < 50:
+                    generated_outline = """
+- Executive Summary
+  * Project goals and objectives
+  * Value proposition
+  * Key differentiators
+
+- Technical Approach
+  * Proposed solution overview
+  * Key technologies
+  * Integration approach
+
+- Implementation Plan
+  * Project phases
+  * Timeline
+  * Resource allocation
+
+- Pricing
+  * Cost breakdown
+  * Payment schedule
+  * ROI analysis
+
+- Conclusion
+  * Next steps
+  * Contact information
+"""
+                
+                # Update the session state with the generated structure
+                st.session_state["proposal_sections"] = generated_outline
+                # Add a timestamp to track when the structure was last modified
+                st.session_state["structure_last_modified"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                # Flag to indicate a newly generated structure
+                st.session_state["structure_newly_generated"] = True
+                # Use rerun to update the UI immediately
+                st.rerun()
+        
+        # Default outline only used if nothing exists in session state
         default_outline = """
 - Executive Summary
   * Key project objectives and scope
@@ -437,11 +609,27 @@ def section_2():
   * Long-term benefits
   * Next steps and call to action
 """
+        # Display the outline in a text area for editing
         outline = st.text_area("Edit or add sections in your proposal outline:",
-                               value=st.session_state.get("proposal_sections", default_outline),
-                               height=400,
-                               key="sec2_outline")
+                              value=st.session_state.get("proposal_sections", default_outline),
+                              height=400,
+                              key="sec2_outline")
         st.session_state["proposal_sections"] = outline
+
+        # Remove the duplicate text area - this whole section is replaced by the above code
+        # Display the proposal structure text area
+        if "proposal_sections" in st.session_state:
+            # Display timestamp if available
+            if "structure_last_modified" in st.session_state:
+                st.caption(f"Last updated: {st.session_state['structure_last_modified']}")
+            
+            # Highlight the text area if newly generated
+            if st.session_state.get("structure_newly_generated", False):
+                st.success("✅ New proposal structure generated successfully!")
+                # Reset the flag after displaying the message
+                st.session_state["structure_newly_generated"] = False
+        else:
+            st.info("No proposal structure generated yet. Please generate a proposal structure in Step 2.")
 
 # =============================================================================
 # Section 3: Proposal Generation & Review
@@ -537,15 +725,6 @@ def section_3():
                         if bullet:  # Only add non-empty bullets
                             section_bullets.append(bullet)
             
-            # Display the bullet points being used (for debugging)
-            if section_bullets:
-                with st.expander(f"Bullet points for {current_section}"):
-                    for bullet in section_bullets:
-                        st.write(f"• {bullet}")
-            else:
-                with st.expander(f"No bullet points found for {current_section}"):
-                    st.write("Using section title only for generation.")
-            
             # Initialize generated sections dictionary if needed
             if "generated_sections" not in st.session_state:
                 st.session_state["generated_sections"] = {}
@@ -583,7 +762,7 @@ def section_3():
                                 "generate_timeline",
                                 client_text=client_info,
                                 relevant_text=extracted_text,
-                                additional_context=f"Generate content ONLY for the '{current_section}' section. Focus exclusively on addressing these specific aspects without any introduction, summary, or conclusion:\n{bullet_points_prompt}\nEnsure the content directly addresses the requirements from the RFP and aligns with the user's organization capabilities.",
+                                additional_context=f"Generate content ONLY for the '{current_section}' section. Focus exclusively on addressing these specific aspects without any introduction, summary, or conclusion:\n{bullet_points_prompt}\nEnsure the content directly addresses the requirements from the RFP and aligns with the user's organization capabilities."
                             )
                             st.session_state["generated_sections"][current_section] = result.get("timeline", "")
                         
@@ -677,6 +856,7 @@ def section_3():
                     st.error("Please generate section content first before applying feedback.")
         else:
             st.error("No sections defined. Please define sections in Step 2.")
+    
     with col_right:
         st.header("Live Proposal Preview")
         refresh_button = st.button("Refresh Preview", key="refresh_preview_btn")
@@ -788,7 +968,7 @@ def section_4():
                     result = coordinator.process_request(
                         "generate_technical_section",
                         client_text="Extract requirements for checklist",
-                        extracted_text=extracted_text[:5000],  # Limit text length
+                        extracted_text=extracted_text[:50000],  # Limit text length
                         project_requirements="List key requirements as bullet points"
                     )
                     tech_solution = result.get("technical_solution", "")
