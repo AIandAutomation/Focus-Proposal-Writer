@@ -1,7 +1,7 @@
 [tool.poetry]
-name = "scraping-insights"
+name = "Multi-Agent-Proposal-Writer"
 version = "0.1.0"
-description = "a focuskpi scraping-insights project"
+description = "a focuskpi Multi-Agent-Proposal-Writer project"
 authors = ["Hao Zhang"]
 readme = "README.md"
 package-mode = false

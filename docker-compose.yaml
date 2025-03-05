@@ -4,9 +4,9 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    container_name: scraping-insights
+    container_name: multi-agent-proposal-writer
     ports:
-      - "8104:8501"
+      - "8107:8501"
     environment:
       - OPENAI_API_KEY=${OPENAI_API_KEY}
       - DATABASE_URL=${DATABASE_URL}
